@@ -49,7 +49,7 @@ Single cell macrophage data available at:
 
 ### <ins> Repository overview
 
-This repository contains Bash and R scripts pertaining to the single-cell RNA-seq analysis of the macrophage dataset.
+This repository contains Bash and R scripts pertaining to the single-cell RNA-seq analysis of the macrophage dataset. It also contains source data for GSEA plots.
 
 1. The pre-processing folder contains the Bash scripts used for preprocessing, utilising the following command line tools:
   - FastQC v0.11.8 
