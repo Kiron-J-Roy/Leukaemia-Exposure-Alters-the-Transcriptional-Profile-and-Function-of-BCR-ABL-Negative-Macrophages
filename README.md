@@ -20,14 +20,35 @@ Alabama at Birmingham, Birmingham, Alabama, USA.
 *Corresponding authors: G. Vignir Helgason; Vignir.Helgason@Glasgow.ac.uk and
 Kristina Kirschner; kristina.kirschner@glasgow.ac.uk
 
+Macrophages are fundamental cells of the innate immune system that support normal
+haematopoiesis, fight infection and play roles in both anti-cancer immunity and tumour
+progression. However, the function of macrophages in myeloid leukaemias remains
+largely unknown due to difficulties in isolating non-transformed cells from those
+derived from the malignant clone. Here we use a state-of-the-art chimeric mouse
+model of chronic myeloid leukaemia (CML) to study the impact of the dysregulated
+bone marrow (BM) microenvironment on bystander macrophages. Utilising both single
+cell RNA sequencing (scRNA-seq) of Philadelphia chromosome (Ph) negative
+macrophages and secretory proteomics of murine c-Kit+ stem/progenitor cells we have
+uncovered that macrophages exposed to a CML environment are altered
+transcriptionally and have reduced phagocytic function. Comparison of CML exposed
+macrophages to control counterparts by scRNA-seq has demonstrated significant
+heterogeneity in bone marrow (BM) macrophages, with the CML niche driving two
+unique subpopulations of immature and anti-inflammatory macrophages. Furthermore,
+we have identified that CML exposed macrophages can be separated from their
+normal counterparts via differential expression of surface markers CD36 and TGFBI,
+thereby providing us with a novel strategy to isolate Ph- macrophages in a CML BM
+niche. Finally, we have demonstrated that the dysregulated CML protein secretome is
+partially responsible for the in vivo alterations of macrophages, uncovering aberrant
+production of the immune modulatory protein lactotransferrin (LTF), and showing
+exposure to CML secreted factors suppresses phagocytosis, mitochondrial respiration,
+and inflammatory gene expression in BM macrophages.
 
+Pre-print now online at:
+Single cell macrophage data available at:
 
+### <ins> Repository overview
 
-
-
-
-
-This repository contains Bash and R scripts pertaining to the single cell macrophage dataset.
+This repository contains Bash and R scripts pertaining to the single-cell RNA-seq analysis of the macrophage dataset.
 
 1. The pre-processing folder contains the Bash scripts used for preprocessing, utilising the following command line tools:
   - FastQC v0.11.8 
