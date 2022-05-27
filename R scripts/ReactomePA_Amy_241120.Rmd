@@ -1,0 +1,224 @@
+---
+title: "ReactomePA Alison"
+author: "Joana Bittencourt Silvestre"
+date: "24/11/2020"
+output: html_document
+---
+
+First, let's load the package
+```{r}
+library(ReactomePA)
+library(dplyr)
+library(tidyr)
+library(stringi)
+library(stringr)
+library(clusterProfiler)
+library(lubridate)
+```
+
+Set names of directories, input and output files
+```{r}
+wd="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/"
+```
+
+```{r}
+#read all files from chosen directory
+#chose the ones that have a certain pattern on them (usually "DESeq2")
+#take always the filtered ones
+getFilesList<-function(wd){
+  setwd(wd)
+  listFiles<-Sys.glob("*DESeq2*.csv")
+  filtMask<-!str_detect(listFiles, "filt")
+  notEmpty<-file.size(listFiles) > 0
+  listFiles<-listFiles[filtMask & notEmpty] 
+  return(listFiles)
+}
+```
+
+
+```{r}
+getTitles<-function(lFiles){
+  lTitles<-list()
+  for (i in 1:length(lFiles)){
+    f<-lFiles[[i]]
+    t<-strsplit(f,"\\.")[[1]]
+    t1 <- gsub("_", " ", t[[2]])
+    lTitles[[i]] <- t1
+    i <- i + 1
+  }
+  return(lTitles)
+}
+```
+
+```{r}
+getGeneList<-function(listFiles, threshold){
+  geneList<-list()
+  i=1
+  for(file in listFiles){
+    df<-read.csv(paste0(wd,file))
+    if(threshold<0){
+      df = df %>% dplyr::filter(log2FoldChange < threshold & padj <0.05 ) %>%
+      dplyr::select(entrez_id, log2FoldChange) %>%
+      drop_na() %>%
+      arrange(log2FoldChange)
+        sort
+    } else {
+      df= df %>% dplyr::filter(log2FoldChange > threshold & padj <0.05 ) %>%
+      dplyr::select(entrez_id, log2FoldChange) %>%
+      drop_na()%>%
+      arrange(log2FoldChange)
+    }
+    
+    genes<-as.vector(df$log2FoldChange)
+    names(genes)<-as.character(df$entrez_id)
+    geneList[[i]]<-genes
+    i=i+1
+  }
+  return(geneList)
+}
+
+```
+
+
+
+Get all the lists you need
+```{r}
+filesList<-getFilesList(wd)
+geneList_POS=getGeneList(filesList, 1.5)
+geneList_NEG=getGeneList(filesList, -1.5)
+titlesList_half<-getTitles(filesList)
+```
+
+```{r}
+addWordToTitles=function(listTitles, word){
+  newList=list()
+  i=1
+  for(title in titlesList_half){
+    newTitle=paste(title, word)
+    newList[[i]]=newTitle
+    i=i+1
+  }
+  return(newList)
+}
+```
+
+```{r}
+titles_Pos=addWordToTitles(titlesList_half, "Pos")
+titles_Neg=addWordToTitles(titlesList_half, "Neg")
+```
+
+
+now, combine gene list and title list
+```{r}
+geneList=c(geneList_POS, geneList_NEG)
+titlesList=c(titles_Pos, titles_Neg)
+```
+
+
+
+
+Don't forget that you must download org.Mm.eg.db or org.Hs.eg.db yourself!
+And also load the package!
+
+Now do the enrichment and establish a p value cuttof
+function takes names of genes instead of LFC, and this is important because the LFC can be used later (justa call geneList[[x]] for whatever you need LFC)
+```{r}
+library(org.Mm.eg.db)
+
+#function to do the enrichment for several lists of genes
+getEnPath<-function(genes){
+  #use that numeric list that we have just obtained
+  listRes=list()
+  i=1
+  for(genes in geneList){
+    enPath<-enrichPathway(gene=names(geneList[[i]]), organism = "mouse", pvalueCutoff=0.05, readable=T)
+    listRes[[i]]<-enPath
+    i=i+1
+  }
+  return(listRes)
+}
+
+```
+
+
+Now use the above created function to create list of enriched pathways
+```{r}
+enPathList<-getEnPath(geneList)
+```
+
+
+Let's find out which enPath is empty
+```{r}
+listEval<-lapply(enPathList, `[`, 1 ) %>% lapply(`[[`,1)
+#And use that info to get that result out of enPathList, titles and gene list
+enPathList.filt<-enPathList[!is.na(listEval)]
+geneList.filt<-geneList[!is.na(listEval)]
+titlesList.filt<-titlesList[!is.na(listEval)]
+```
+
+And now everything is kind of ready to test the graphs, so I'll do all results per graph type
+you must use print to plot your graph in order for png to work in a loop
+```{r}
+i=1
+for(e in enPathList.filt){
+  fname<-paste0(wd,"reactomePA_barPlot_",titlesList.filt[[i]],today(),".png")
+  png(fname, width = 35, height = 10, units = "cm", res=300)
+  print(barplot(enPathList.filt[[i]], showCategory=8))
+  dev.off( )
+  i=i+1
+}
+```
+
+
+```{r}
+i=1
+for(e in enPathList.filt){
+  fname<-paste0(wd,"reactomePA_dotPlot_",titlesList.filt[[i]],today(),".png")
+  png(fname, width = 25, height = 10, units = "cm", res=300)
+  print(dotplot(enPathList.filt[[i]], showCategory=15))
+  dev.off()
+  i=i+1
+}
+
+```
+
+```{r}
+i=1
+for(e in enPathList.filt){
+  fname<-paste0(wd,"reactomePA_emapplot_",titlesList.filt[[i]],today(),".png")
+  png(fname, width = 35, height = 25, units = "cm", res=300)
+  print(emapplot(enPathList.filt[[i]]))
+  dev.off()
+  i=i+1
+}
+```
+
+```{r}
+i=1
+for(e in enPathList.filt){
+  fname<-paste0(wd,"reactomePA_cnetplot_",titlesList.filt[[i]],today(),".png")
+  png(fname, width = 35, height = 25, units = "cm", res=300)
+  print(cnetplot(enPathList.filt[[i]], categorySize="pvalue", foldChange=geneList.filt[[i]]))
+  dev.off()
+  i=i+1
+}
+```
+Now using cluster profiles for some cooler graphs
+Num needs to have NAME!!!!
+
+```{r}
+require(clusterProfiler)
+names(geneList.filt)<-titlesList.filt
+res <- compareCluster(lapply(geneList.filt, names), fun="enrichPathway")
+fname<-paste0(wd,"reactomePA_clusterProf_posAndNeg_",today(),".svg")
+dev.new()
+svg(fname)
+dotplot(res, font.size=10)
+dev.off()
+```
+
+
+
+```{r}
+sessionInfo()
+```
