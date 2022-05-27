@@ -1,0 +1,156 @@
+---
+title: "DESeq2_sc"
+author: "Joana Bittencourt Silvestre"
+date: "18/02/2020"
+output: html_document
+---
+
+```{r}
+library("DESeq2")
+library("readr")
+library("dplyr")
+library("biomaRt")
+library("ggplot2")
+library("lubridate")
+suppressPackageStartupMessages({
+library(zingeR)
+library(Biobase)
+library(gamlss)
+library(gamlss.tr)
+library(edgeR)
+})
+```
+
+
+set up working directory and files
+```{r}
+wd="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/"
+clustersFile="clusters2020-01-31.tsv"
+coldataFile="coldata_noNeut2020-01-21.csv"
+countsFile="counts_noNeutr2020-01-21.csv"
+ctsFiltFile="filtCounts2020-02-19.csv"
+ensembl_dataset="mmusculus_gene_ensembl"
+```
+
+
+```{r}
+cts=read.csv(paste0(wd,ctsFiltFile), row.names = 1)
+colnames(cts)<-gsub("X","",colnames(cts))
+colnames(cts)<-gsub("\\.","-",colnames(cts))
+```
+
+```{r}
+clusters=read.delim(paste0(wd,clustersFile), sep = "\t")
+
+coldataPreFilt=read.csv(paste0(wd,coldataFile))
+coldata=coldataPreFilt %>% filter(cell %in% clusters$cell) %>% merge(.,clusters, by="cell")
+coldata$cluster=as.factor(coldata$cluster)
+rownames(coldata)=coldata$cell
+coldata<-coldata[,c("cell", "cluster")]
+```
+
+
+```{r}
+ge=read.delim(paste0(wd,"markers2020-02-17.tsv"), sep = "\t")
+ge.filt=filter(ge, p.value<=0.05)
+```
+
+
+```{r}
+genesOfInterest=data.frame("gene"=ge.filt$X)
+cts$gene=rownames(cts)
+
+cts.genes=merge(cts,genesOfInterest, by="gene")
+rownames(cts.genes)=cts.genes$gene
+cts.genes$gene=NULL
+```
+
+
+filter coldata and counts by the cells that are in the clusters file (because this one is post QC)
+```{r}
+coldata=coldataPreFilt %>% filter(cell %in% clusters$cell) %>% merge(.,clusters, by="cell")
+coldata$cluster=as.factor(coldata$cluster)
+rownames(coldata)=coldata$cell
+coldata<-coldata[,c("cell", "cluster")]
+
+# cols.use <- names(countsPreFilt)[(names(countsPreFilt) %in% coldata$cell)]
+# cts <- countsPreFilt[, cols.use]
+```
+
+```{r}
+#make sure rownames of coldata are the same as the colnames in the count matrix
+cts.genes<-cts.genes[,rownames(coldata)]
+print("Are the rownames of coldata the same as the colnames in the count matrix?")
+all(rownames(coldata) == colnames(cts.genes))
+```
+Now create the dds object in DESeq2
+Remember that matrices can only contain one data type
+
+And also, user zingeR to deal with sparse matrices
+https://github.com/statOmics/zingeR/blob/master/vignettes/zingeRVignette_v2.Rmd
+
+```{r}
+mm=model.matrix(~ cluster, data=as.data.frame(coldata))
+
+dds<-DESeqDataSetFromMatrix(countData=cts.genes,
+                            colData = coldata,
+                            design= ~cluster)
+
+#remove the genes with very low count
+keep<-rowSums(counts(dds)) >= 10
+dds<-dds[keep,]
+
+
+weights <- zeroWeightsLS(counts=counts(dds), design=mm, maxit=200, normalization="DESeq2_poscounts", colData=coldata, designFormula=~cluster)
+assays(dds)[["weights"]]=weights
+
+dds = DESeq2::estimateSizeFactors(dds, type="poscounts")
+
+dds = estimateDispersions(dds, minmu=1e-6)
+
+
+dds = nbinomWaldTest(dds, betaPrior=TRUE, useT=TRUE, df=rowSums(weights)-2)
+```
+
+
+```{r}
+getResultFromContrast<-function(contr){
+  res<-results(dds, contrast=contr)
+  res$gene <-rownames(res)
+  df.res<-as.data.frame(res)
+  ensembl = useEnsembl(biomart="ensembl", dataset=ensembl_dataset)
+  t2g <- biomaRt::getBM(attributes = c("external_gene_name", "entrezgene_id"), mart = ensembl)
+  t2g <- dplyr::rename(t2g, gene = external_gene_name, entrez_id=entrezgene_id)
+  df.annot<-merge(x=df.res, y=t2g, by="gene", all.x=TRUE)
+  return(df.annot)
+}
+
+```
+
+
+```{r}
+
+c1=c(0,1,-1/4,-1/4,-1/4,-1/4)
+res1=getResultFromContrast(c1)
+write.csv(res1, file=paste0(wd,"DESeq2.cluster1.",today(),".csv"), row.names = FALSE)
+
+c2=c(0,-1/4,1,-1/4,-1/4,-1/4)
+res2=getResultFromContrast(c2)
+write.csv(res2, file=paste0(wd,"DESeq2.cluster2.",today(),".csv"), row.names = FALSE)
+
+c3=c(0,-1/4,-1/4,-1/4,1,-1/4)
+res3=getResultFromContrast(c3)
+write.csv(res3, file=paste0(wd,"DESeq2.cluster3.",today(),".csv"), row.names = FALSE)
+
+c4=c(0,-1/4,-1/4,-1/4,1,-1/4)
+res4=getResultFromContrast(c4)
+write.csv(res4, file=paste0(wd,"DESeq2.cluster4.",today(),".csv"), row.names = FALSE)
+
+c5=c(0,-1/4,-1/4,-1/4,-1/4, 1)
+res5=getResultFromContrast(c5)
+write.csv(res5, file=paste0(wd,"DESeq2.cluster5.",today(),".csv"), row.names = FALSE)
+```
+
+
+
+https://github.com/statOmics/zingeR/blob/master/vignettes/zingeRVignette_v2.Rmd
