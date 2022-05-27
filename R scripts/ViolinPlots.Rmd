@@ -1,0 +1,124 @@
+---
+title: "Untitled"
+author: "Joana Bittencourt Silvestre"
+date: "06/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(lubridate)
+library(rstatix)
+```
+
+
+```{r}
+filt_sce=readRDS("/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Feb21/filt_sce_2021-02-12.rds")
+```
+
+Violin plot of ly6c2, S100a6, mrc1, tgfbi, cd36 and lgals1 for Amy (30/1/20)
+First get subset of sce with the above mentionaed genes
+```{r}
+genes.violin=c("Cd74","Fos")
+sce_violin=filt_sce[genes.violin,]
+exp.violin=as.data.frame(logcounts(sce_violin))
+exp.violin$gene=rownames(exp.violin)
+exp.violin=exp.violin %>% dplyr::select(gene, everything())
+clusters.violin=data.frame("cell"=colnames(sce_violin),"cluster"=sce_violin$cluster)
+```
+
+Now gather and graph
+```{r}
+exp.violin.gather=gather(exp.violin, "cell", "Expression", 2:ncol(exp.violin))
+exp.violin.details= merge(exp.violin.gather, clusters.violin, by="cell")
+```
+
+get C before cluster name
+```{r}
+exp.violin.details$cluster=paste0("C",exp.violin.details$cluster)
+```
+
+Do stats test besfore separating by gene to make sure multiple teting correction is applied correcly
+```{r}
+stat.test <- exp.violin.details %>%
+  group_by(gene) %>%
+  pairwise_wilcox_test(Expression ~ cluster) %>%
+  add_significance("p.adj") %>% add_xy_position(x = "cluster", dodge = 0.2)
+```
+
+
+Divide by gene to plot
+```{r}
+for(geneOfInterest in genes.violin){
+  data.sele=exp.violin.details %>% filter(gene==geneOfInterest)
+  ggplot( data=data.sele,
+  aes( x=cluster, y=Expression, color=cluster)) +
+  geom_violin() + 
+  geom_jitter(size = 0.1) +
+  stat_summary(fun.y=median, geom="point", shape=23, size=2)+
+  scale_color_manual(values=c("dodgerblue3","darkorange1","forestgreen","firebrick3","mediumpurple3", "burlywood4"))+
+  theme_minimal() +
+  labs(x = "Cluster",
+       y = "Normalised logcounts")+
+  theme(axis.text.x = element_text(family = "sans", angle = 60, size=8, hjust = 1))+
+   stat_pvalue_manual(
+     stat.test %>% filter(gene==geneOfInterest), label = "p.adj.signif", tip.length = 0.01,y.position = max(data.sele$Expression),size=2,dodge = 0.2,step.increase = 0.1,bracket.nudge.y = 0.1,hide.ns = TRUE)+
+  ggtitle(geneOfInterest)+theme(plot.title = element_text(hjust = 0.5))
+  
+saveDirNew="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/May21/"
+ggsave(paste0(saveDirNew,"violin_genes_",geneOfInterest,"_Jun21",".png"), dpi = 300, width = 8, height = 6, units = "cm")
+#ggsave(paste0(saveDirNew,"violin_genes_",geneOfInterest,"_Jun21",".svg"), width = 15, height = 12)
+}
+
+```
+
+```{r}
+p <-ggplot( data=exp.violin.details,
+        aes( x=cluster, y=Expression, color=cluster)) +
+  facet_wrap(~gene)+
+  geom_violin() + 
+  geom_jitter(size = 0.1) +stat_summary(fun=median, geom="point", shape=23, size=2)+
+  scale_color_manual(values=c("dodgerblue3","darkorange1","forestgreen","firebrick3","mediumpurple3", "burlywood4"))+
+  theme_minimal() +
+  labs(x = "Cluster",
+       y = "Normalised logcounts")+
+  theme(axis.text.x = element_text(family = "sans", angle = 60, size=8, hjust = 1))
+
+print(p)
+ggsave(paste0(saveDirNew,"violin_genes_all_noStat_Jun21",".png"), dpi = 300, width = 15, height = 12, units = "cm")
+```
+
+
+```{r}
+saveDir="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/May21/"
+```
+
+
+Getting other info for Amy
+```{r}
+xp_matrix = logcounts(filt_sce)
+tsne_coord = reducedDim(filt_sce, "TSNE")
+xp_raw=counts(filt_sce)
+
+ write.table(xp_matrix, file=paste0(saveDir,"xp_matrix_norNorm_",today(),".tsv"), sep="\t",
+     quote=FALSE, col.names=NA)
+
+ write.table(xp_raw, file=paste0(saveDir,"xp_raw_filt_notNorm_",today(),".tsv"), sep="\t",
+     quote=FALSE, col.names=NA)
+
+ write.table(tsne_coord, file=paste0(saveDir,"tsne_coord_norNorm_",today(),".tsv"), sep="\t",
+     quote=FALSE, col.names=NA)
+```
+
+
+
+```{r}
+sessionInfo()
+```
+
+

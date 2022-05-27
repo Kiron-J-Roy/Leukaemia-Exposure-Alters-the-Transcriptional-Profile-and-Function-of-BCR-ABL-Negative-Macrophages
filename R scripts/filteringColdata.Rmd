@@ -1,0 +1,24 @@
+---
+title: "Untitled"
+author: "Joana Bittencourt Silvestre"
+date: "03/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+f="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/filtCounts_notNorm_2020-12-03.csv"
+c="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/coldata_noNeut2020-01-21.csv"
+
+f1=read.csv(f, check.names = F)
+c1=read.csv(c)
+
+coldata_filt=c1 %>% filter(cell %in% colnames(f1))
+
+write.csv(coldata_filt, "/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/coldata_noNeut2020-12-03.csv", row.names = T, quote = F)
+```
+

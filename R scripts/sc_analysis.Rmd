@@ -1,0 +1,785 @@
+---
+title: "Single cell analysis"
+author: "Joana Bittencourt Silvestre"
+date: "20/11/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load packages that are needed for the analysis
+```{r}
+library(tidyverse)
+library(scater)
+library(SingleCellExperiment)
+library(biomaRt)
+library(scran)
+library(lubridate)
+library(mapmisc)
+library(data.table)
+library(SummarizedExperiment)
+library(SEtools)
+```
+
+Save paths of files will  necessary for the analysis
+```{r}
+wd="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/"
+saveDir="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/"
+dir2="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Feb21/"
+```
+
+Read count matrix.
+```{r}
+cts=as.matrix(read.csv("/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/counts_noNeut_noRedBlood_2020-11-20.csv", check.names = F, row.names = 1))
+```
+
+Coldata (information about the samples) is obtained via the experimental design table
+```{r}
+cellsOfInterest=data.frame("cell"=colnames(cts))
+coldata = read.csv("/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/coldata_noNeut2020-01-21.csv") %>% dplyr::filter(cell %in% cellsOfInterest$cell )
+
+coldata=as.matrix(coldata)
+```
+
+Test to confirm that the column names of the count matrix are the same as the row names of the coldata
+```{r}
+print("Are the rownames of coldata the same as the colnames in the count matrix?")
+all(rownames(coldata) == colnames(cts))
+```
+
+Now, created single cell experiment object using data from count matrix and coldata
+```{r}
+sce <- SingleCellExperiment(
+    assays = list(counts=cts), 
+    colData = coldata
+)
+sce
+```
+
+Now remove genes that have low counts
+```{r}
+#first check how many genes would remain
+ave.counts <- rowMeans(counts(sce))
+keep <- ave.counts >= 1
+sum(keep)
+```
+
+Then actually only keep the rows that meet the criteria (average counts of more than 1, meaning, no zeroes)
+```{r}
+sce <- sce[keep,]
+```
+
+Add the information of which row is ERCC and which row is gene
+```{r}
+is.spike <- grepl("^ERCC-", rownames(sce))
+
+sce <- splitAltExps(sce, ifelse(is.spike, "ERCC", "gene"))
+altExpNames(sce)
+```
+
+
+Now annotate the sce
+```{r}
+library(org.Mm.eg.db)
+symb <- mapIds(org.Mm.eg.db, keys=rownames(sce), keytype="ENSEMBL", column="SYMBOL")
+rowData(sce)$ENSEMBL <- rownames(sce)
+rowData(sce)$SYMBOL <- symb
+head(rowData(sce))
+```
+
+Make features unique
+```{r}
+library(scater)
+rownames(sce) <- uniquifyFeatureNames(rowData(sce)$ENSEMBL, rowData(sce)$SYMBOL)
+head(rownames(sce))
+```
+
+Use the following package to annotate the chromosomes of the genes (this will be used later to make sure there isn't excessive mitochondrial rna on your sample)
+```{r}
+library(TxDb.Mmusculus.UCSC.mm10.ensGene)
+location <- mapIds(TxDb.Mmusculus.UCSC.mm10.ensGene, keys=rowData(sce)$ENSEMBL, 
+    column="CDSCHROM", keytype="GENEID")
+rowData(sce)$CHR <- location
+summary(location=="chrM")
+```
+First, we use the chromosome annotation to assign the genes to the "mitochondria group"
+
+```{r}
+mito <- which(rowData(sce)$CHR=="chrM")
+```
+
+
+
+#Check Data Distribution
+A question for myself.. how's the distribution of my data?
+I've put a ylim because obviouly there are more zeroes than anything 
+Also, frequency (x axis) is features
+```{r}
+par(mfrow=c(1,2))
+hist(counts(sce), breaks=40, main="", col="grey80", ylim = c(0,500), xlab="counts")
+hist(log((counts(sce))), breaks=40, main="", col="grey80", ylim = c(0,100000), xlab="logcounts")
+#dev.copy(png,paste0(wd,"distribution_counts_logcounts",today(),".png"), width = 25, height = 15, units = "cm", res=300)
+#dev.off()
+```
+
+
+#QC
+Why do QC?
+SOURCE:https://osca.bioconductor.org/quality-control.html#quality-control-motivation
+"Low-quality libraries in scRNA-seq data can arise from a variety of sources such as cell damage during dissociation or failure in library preparation (e.g., inefficient reverse transcription or PCR amplification). These usually manifest as “cells” with low total counts, few expressed genes and high mitochondrial or spike-in proportions. These low-quality libraries are problematic as they can contribute to misleading results in downstream analyses:
+
+They form their own distinct cluster(s), complicating interpretation of the results. This is most obviously driven by increased mitochondrial proportions or enrichment for nuclear RNAs after cell damage. In the worst case, low-quality libraries generated from different cell types can cluster together based on similarities in the damage-induced expression profiles, creating artificial intermediate states or trajectories between otherwise distinct subpopulations. Additionally, very small libraries can form their own clusters due to shifts in the mean upon transformation (A. Lun 2018).
+They distort the characterization of population heterogeneity during variance estimation or principal components analysis. The first few principal components will capture differences in quality rather than biology, reducing the effectiveness of dimensionality reduction. Similarly, genes with the largest variances will be driven by differences between low- and high-quality cells. The most obvious example involves low-quality libraries with very low counts where scaling normalization inflates the apparent variance of genes that happen to have a non-zero count in those libraries.
+They contain genes that appear to be strongly “upregulated” due to aggressive scaling to normalize for small library sizes. This is most problematic for contaminating transcripts (e.g., from the ambient solution) that are present in all libraries at low but constant levels. Increased scaling in low-quality libraries transforms small counts for these transcripts in large normalized expression values, resulting in apparent upregulation compared to other cells. This can be misleading as the affected genes are often biologically sensible but are actually expressed in another subpopulation.
+To avoid - or at least mitigate - these problems, we need to remove these cells at the start of the analysis. This step is commonly referred to as quality control (QC) on the cells. (We will use “library” and “cell” rather interchangeably here, though the distinction will become important when dealing with droplet-based data.) We will demonstrate using a small scRNA-seq dataset from A. T. L. Lun et al. (2017), which is provided with no prior QC so that we can apply our own procedures."
+
+
+Some extra words about QC from the same place
+"For each cell, we calculate these QC metrics using the perCellQCMetrics() function from the scater package (McCarthy et al. 2017). The sum column contains the total count for each cell, the detected column contains the number of detected genes, subsets_Mito_percent contains the percentage of reads mapped to mitochondrial transcripts (based on Ensembl annotation) and altexps_ERCC_percent contains the percentage of reads mapped to ERCC transcripts."
+###Now actual QC
+
+
+Now make a data frame with QC metrics (from mitochondrial genes)
+```{r}
+df <- perCellQCMetrics(sce, subsets=list(Mito=mito))
+colnames(df)
+```
+
+from https://osca.bioconductor.org/quality-control.html
+"A key assumption here is that the QC metrics are independent of the biological state of each cell. Poor values (e.g., low library sizes, high mitochondrial proportions) are presumed to be driven by technical factors rather than biological processes, meaning that the subsequent removal of cells will not misrepresent the biology in downstream analyses. Major violations of this assumption would potentially result in the loss of cell types that have, say, systematically low RNA content or high numbers of mitochondria. We can check for such violations using some diagnostics described in Sections 6.4"
+
+```{r}
+#adding cell names to this vector, so I can individually ID cells
+rownames(df)=as.character(sce@colData$cell)
+```
+
+
+```{r}
+cellsDet=data.frame("cell"=rownames(df),
+                    "features"=df$detected,
+                    "ERCC"=df$altexps_ERCC_sum,
+                    "mitoc_genes"=df$subsets_Mito_sum)
+```
+#Identifying outliers
+
+According to the tutorial, finding out the best parameters for discarding the outliers takes a lot of experience in the field. Counting on the fact that I have no experience in cs analysis, I decided to go for the adaptive threshold.
+
+from: https://osca.bioconductor.org/quality-control.html#identifying-low-quality-cells
+
+"To obtain an adaptive threshold, we assume that most of the dataset consists of high-quality cells. We then identify cells that are outliers for the various QC metrics, based on the median absolute deviation (MAD) from the median value of each metric across all cells. Specifically, a value is considered an outlier if it is more than 3 MADs from the median in the “problematic” direction. This is loosely motivated by the fact that such a filter will retain 99% of non-outlier values that follow a normal distribution*.
+
+For the 416B data, we identify cells with log-transformed library sizes that are more than 3 MADs below the median. A log-transformation is used to improve resolution at small values when type="lower". In particular, it guarantees that the threshold is not a negative value, which would be meaningless for quality control on these metrics. Moreover, these metrics can occasionally exhibit a heavy right tail, and the log-transformation makes the distribution seem more normal to justify the 99% rationale mentioned above."
+
+*my observation: I don't really know if my non-outliers actually follow a normal distribution, but the figure above is there to illustrate it.
+
+## Quality control graphs
+
+First part of the control graphs is the proportion mitochondrial genes and ERCC in cells.
+Ideally we want to many cells with a low proportion of mitochondrial genes and ERCC, and very few cells with a higher proportion
+```{r}
+par(mfrow=c(2,2))
+hist(df$subsets_Mito_percent, xlab="Mitochondrial proportion (%)",
+     ylab="Number of cells", breaks=20, main="", col="grey80")
+hist(df$altexps_ERCC_percent, xlab="ERCC proportion (%)",
+     ylab="Number of cells", breaks=20, main="", col="grey80")
+hist(df$sum/1e6, xlab="sum of counts (^1e6)", main="",
+     breaks=20, col="grey80", ylab="Number of cells")
+hist(df$detected, xlab="features detected", main="",
+     breaks=20, col="grey80", ylab="Number of cells")
+#dev.copy(png, paste0(saveDir,"pre_QC_measurements",today(),".png"), width = 25, height = 25, units = "cm", res=300)
+#dev.off()
+```
+
+#Are the cells with high mitochondrial percentage also high on ERCC?
+```{r}
+par(mfrow=c(1,2))
+plot(df$altexps_ERCC_percent,df$subsets_Mito_percent, ylab="Mitochondrial proportion (%)",
+     xlab="ERCC proportion (%)",main="", col="grey50")
+plot(df$detected,df$subsets_Mito_percent, ylab="Mitochondrial proportion (%)",
+     xlab="features detected",main="", col="grey50")
+#dev.copy(png, paste0(saveDir,"mito_vs_ercc__mito_vs_feat",today(),".png"), width = 28, height = 12, units = "cm", res=300)
+#dev.off()
+```
+
+
+This graph shows the proportion of mitochondrial genes, spikes, sum of counts and sum of features. Everything here is based on per cell quality control.
+We're interested in selecting the cells which aren't good quality. Those are the ones with high mitochondrial proportion or spikes (see explanation above). And also the ones with low sum of counts and sum of features detected.
+
+As mentioned above, an adaptive threshold is a better way to filter cells by quality.
+
+The following function does the filtering in one step.
+I used nmads of 4. The default is 3, but I thought it was too stringent.
+```{r}
+qc.param <- quickPerCellQC(df, percent_subsets=c("subsets_Mito_percent",
+    "altexps_ERCC_percent"), nmads=4)
+
+colSums(as.matrix(qc.param))
+```
+
+#Diagnostic plots
+Now I'm going to plot some diagnostic plots
+
+https://osca.bioconductor.org/quality-control.html#quality-control-plots
+"It is good practice to inspect the distributions of QC metrics (Figure 6.2) to identify possible problems. In the most ideal case, we would see normal distributions that would justify the 3 MAD threshold used in outlier detection. A large proportion of cells in another mode suggests that the QC metrics might be correlated with some biological state, potentially leading to the loss of distinct cell types during filtering. Batches with systematically poor values for any metric can also be quickly identified for further troubleshooting or outright removal."
+```{r}
+colData(sce) <- cbind(colData(sce), df)
+sce$plate <- factor(sce$plate)
+sce$condition <- ifelse(grepl("control", sce$condition),
+    "control", "CML")
+sce$discard <- qc.param$discard
+
+
+
+gridExtra::grid.arrange(
+    plotColData(sce, x="plate", y="sum", colour_by="discard",
+        other_fields="condition", shape_by = "condition") + 
+        scale_y_log10() + ggtitle("Total count"),
+    plotColData(sce, x="plate", y="detected", colour_by="discard", 
+        other_fields="condition", shape_by = "condition") + 
+        scale_y_log10() + ggtitle("Detected features"),
+    plotColData(sce, x="plate", y="subsets_Mito_percent", 
+        colour_by="discard", other_fields="condition", shape_by = "condition") + 
+       ggtitle("Mito percent"),
+    plotColData(sce, x="plate", y="altexps_ERCC_percent", 
+        colour_by="discard", other_fields="condition", shape_by = "condition") + 
+        ggtitle("ERCC percent"),
+    ncol=2
+)
+
+#dev.copy(png, paste0(wd,"qc_dist",today(),".png"), width = 25, height = 25, units = "cm", res=300)
+#dev.off()
+
+```
+
+###Other QC plots
+"Another useful diagnostic involves plotting the proportion of mitochondrial counts against some of the other QC metrics. The aim is to confirm that there are no cells with both large total counts and large mitochondrial counts, to ensure that we are not inadvertently removing high-quality cells that happen to be highly metabolically active (e.g., hepatocytes). In this case, we do not observe any points in the top-right corner in Figure 6.3."
+```{r}
+plotColData(sce, x="sum", y="subsets_Mito_percent", 
+    colour_by="discard", other_fields=c("plate", "condition"), shape_by = "plate") +
+  geom_text(aes(label=ifelse(df$subsets_Mito_percent>20,as.character(rownames(df)),'')),hjust=0,vjust=0, size=2) +
+    facet_grid(~condition) +
+    theme(panel.border = element_rect(color = "grey"))
+#dev.copy(png, paste0(wd,"mitocGenes_vs_sum",today(),".png"), width = 25, height = 10, units = "cm", res=300)
+#dev.off()
+```
+
+"Comparison of the ERCC and mitochondrial percentages can also be informative (Figure 6.4). Low-quality cells with small mitochondrial percentages, large spike-in percentages and small library sizes are likely to be stripped nuclei, i.e., they have been so extensively damaged that they have lost all cytoplasmic content. Conversely, cells with high mitochondrial percentages and low ERCC percentages may represent undamaged cells that are metabolically active."
+```{r}
+plotColData(sce, x="altexps_ERCC_percent", y="subsets_Mito_percent",
+    colour_by="discard", other_fields=c("plate", "condition"), shape_by = "plate") + 
+  geom_text(aes(label=ifelse(df$subsets_Mito_percent>20,as.character(rownames(df)),'')),hjust=0,vjust=0, size=2) +
+    facet_grid(~condition) + 
+    theme(panel.border = element_rect(color = "grey"))
+#dev.copy(png, paste0(wd,"mitocGenes_vs_ERCC",today(),".png"), width = 25, height = 10, units = "cm", res=300)
+#dev.off()
+```
+
+#Removing low quality cells
+The filtering process quite straighforward
+```{r}
+# Keeping the columns we DON'T want to discard.
+filt_sce <- sce[,!qc.param$discard]
+```
+
+```{r}
+print(paste(as.character(length(sce@colData$cell)), as.character(length(filt_sce@colData$cell))))
+```
+
+
+#Take a look at the cells who were left
+```{r}
+df_filtered <- perCellQCMetrics(filt_sce, subsets=list(Mito=mito))
+
+#adding cell names to this vector, so I can individually ID cells
+rownames(df_filtered)=as.character(filt_sce@colData$cell)
+
+cellsDetFilt=data.frame("cell"=rownames(df_filtered),
+                    "features"=df_filtered$detected,
+                    "ERCC"=df_filtered$altexps_ERCC_sum,
+                    "mitoc_genes"=df_filtered$subsets_Mito_sum)
+```
+
+
+#plot hitograms post QC
+```{r}
+par(mfrow=c(2,2))
+hist(df_filtered$subsets_Mito_percent, xlab="Mitochondrial proportion (%)",
+     ylab="Number of cells", breaks=20, main="", col="grey80")
+hist(df_filtered$altexps_ERCC_percent, xlab="ERCC proportion (%)",
+     ylab="Number of cells", breaks=20, main="", col="grey80")
+hist(df_filtered$sum/1e6, xlab="sum of counts (^1e6)", main="",
+     breaks=20, col="grey80", ylab="Number of cells")
+hist(df_filtered$detected, xlab="features detected", main="",
+     breaks=20, col="grey80", ylab="Number of cells")
+#dev.copy(png, paste0(saveDir,"post_QC_measurements",today(),".png"), width = 25, height = 25, units = "cm", res=300)
+#dev.off()
+```
+
+#save pre and post filetring details about cells
+```{r}
+#write.csv(cellsDet, paste0(saveDir,"QC_cells_details_preFilter", today(),".csv"), quote = F, row.names = F)
+
+#write.csv(cellsDetFilt, paste0(saveDir,"QC_cells_details_postFilter", today(),".csv"), quote = F, row.names = F)
+```
+
+
+log non normalised data
+```{r}
+logcounts(filt_sce) <- log(counts(filt_sce)+1)
+```
+
+
+#Now store reduced dimentions
+```{r}
+filt_sce <- scater::runPCA(filt_sce)
+```
+I have a question for tsne. What is the perplexity?
+https://distill.pub/2016/misread-tsne/
+Apparently, complexity is the proportion between local and global influences in the results of tsne. I decided to go for 50, because it's kind of in the middle.
+```{r}
+set.seed(2302)
+filt_sce <- scater::runTSNE(filt_sce, perplexity=50)
+```
+
+
+Check out what reduced dimensions we have
+```{r}
+reducedDims(filt_sce)
+```
+save counts
+```{r}
+filt.counts=counts(filt_sce)
+#write.csv(filt.counts, paste0(saveDir,"filtCounts_notNorm_",today(),".csv"), quote = F)
+```
+
+
+#Variance modelling - taking account cell cycle phases
+The higly variable genes are used for clustering (samples that have similar values in gighly variable genes will be clustered together, for example). 
+In order to make this more precise and improve resolution, the geens that vary because of technical noise should be removed (for example, the genes that have a high variation because one sample started off with less RNA than the other).
+The variance in each sample is decomposed in technical and biological (alas, the ones that don't matter and the ones that do). 
+This is done by fitting a trend to the endogenous variances.
+```{r}
+dec <- modelGeneVar(filt_sce)#, block=assignments$phases)
+plot(dec$mean, dec$total, xlab="Mean log-expression", ylab="Variance")
+#curve(metadata(dec)$trend(x), col="blue", add=TRUE)
+```
+
+#Choosing the principal components
+Another approach is based on the assumption that each subpopulation should be separated from each other on a different axis of variation. Thus, we choose the number of PCs that is not less than the number of subpopulations (which are unknown, of course, so we use the number of clusters as a proxy). It is then a simple to subset the dimensionality reduction result to the desired number of PCs.
+```{r}
+sced <- denoisePCA(filt_sce, dec, subset.row=getTopHVGs(dec, prop=0.1))
+ncol(reducedDim(sced, "PCA"))
+
+```
+
+```{r}
+output <- getClusteredPCs(reducedDim(filt_sce))
+npcs <- metadata(output)$chosen
+reducedDim(filt_sce, "PCAsub") <- reducedDim(filt_sce, "PCA")[,1:npcs,drop=FALSE]
+npcs
+
+```
+
+#Graph based clustering
+Clustering of scRNA-seq data is commonly performed with graph-based methods due to their relative scalability and robustness. scran provides several graph construction methods based on shared nearest neighbors (Xu and Su 2015) through the buildSNNGraph() function. This is most commonly generated from the selected PCs, after which methods from the igraph package can be used to identify clusters.
+```{r}
+g <- buildSNNGraph(filt_sce, use.dimred="PCAsub")
+cluster <- igraph::cluster_walktrap(g)$membership
+filt_sce$cluster <- factor(cluster)
+table(filt_sce$cluster)
+
+```
+
+#T-SNE
+```{r}
+set.seed(100)
+filt_sce <- runTSNE(filt_sce, dimred="PCAsub")
+#svg(paste0(wd,"tsne_larger",today(),".svg"), width = 10, height = 6)
+plotTSNE(filt_sce, colour_by="cluster", shape_by="condition")
+#dev.copy(png, paste0(saveDir,"tsne_notNorm_noCellCycle_",today(),".png"), width = 10, height = 8, units = "cm", res=300)
+#dev.off()
+```
+
+```{r}
+plotTSNE(filt_sce, colour_by="cluster", shape_by="plate")
+#dev.copy(png, paste0(saveDir,"tsne_notNorm_plate_noCellCycle_",today(),".png"), width = 10, height = 8, units = "cm", res=300)
+#dev.off()
+```
+
+another tsne
+```{r}
+set.seed(2302)
+#filt_sce <- runTSNE(filt_sce, dimred="PCAsub")
+#svg(paste0(wd,"tsne_larger",today(),".svg"), width = 10, height = 6)
+
+plotTSNE(filt_sce, colour_by="Cd36", shape_by="condition")
+#t+scale_colour_gradient2(low='red', high ='blue')
+#fname_now=paste0(wd,"features_cd86",today(),".png")
+#png(fname_now, width = 10, height = 8, units = "cm", res=300)
+#dev.copy(png, paste0(saveDir,"features_cd36_notNorm_",today(),".png"), width = 10, height = 8, units = "cm", res=300)
+#dev.off()
+```
+
+
+#Extra plots
+
+For graph-based methods, another diagnostic is to examine the ratio of observed to expected edge weights for each pair of clusters (closely related to the modularity score used in many cluster_* functions). We would usually expect to see high observed weights between cells in the same cluster with minimal weights between clusters, indicating that the clusters are well-separated. Off-diagonal entries indicate that some clusters are closely related, which is useful to know for checking that they are annotated consistently.
+```{r}
+ratio <- clusterModularity(g, cluster, as.ratio=TRUE)
+
+library(pheatmap)
+pheatmap(log10(ratio+1), cluster_cols=FALSE, cluster_rows=FALSE,
+    col=rev(heat.colors(100)))
+```
+
+A more general diagnostic involves bootstrapping to determine the stability of the partitions between clusters. Given a clustering function, the bootstrapCluster() function uses bootstrapping to compute the co-assignment probability for each pair of original clusters, i.e., the probability that one randomly chosen cell from each cluster is assigned to the same cluster in the bootstrap replicate . Larger probabilities indicate that the separation between those clusters is unstable to the extent that it is sensitive to sampling noise, and thus should not be used for downstream inferences.
+```{r}
+ass.prob <- bootstrapCluster(filt_sce, FUN=function(x) {
+    g <- buildSNNGraph(x, use.dimred="PCAsub")
+    igraph::cluster_walktrap(g)$membership
+}, clusters=sce$cluster)
+
+pheatmap(ass.prob, cluster_cols=FALSE, cluster_rows=FALSE,
+    col=colorRampPalette(c("white", "blue"))(100))
+```
+
+#Finding markers
+```{r}
+markers <- findMarkers(filt_sce, filt_sce$cluster)
+markers.table<-markers[[1]]
+```
+
+We save the list of candidate marker genes for further examination.
+```{r}
+#write.table(markers.table, file=paste0(saveDir,"markers_norNorm_noCellCycle_",today(),".csv"), sep=",", 
+#    quote=FALSE, col.names=NA)
+```
+
+```{r}
+top.markers <- rownames(markers.table)[markers.table$Top <= 10]
+
+plotHeatmap(filt_sce, features=top.markers, columns=order(filt_sce$cluster), 
+    colour_columns_by=c("cluster", "condition"),
+    cluster_cols=FALSE, center=TRUE, symmetric=TRUE, zlim=c(-5, 5), 
+    show_colnames = FALSE) 
+#dev.copy(png, paste0(saveDir,"heatmap_topmarkers_norNorm_noCellCycle_",today(),".png"), height = 17, width = 15, units = "cm", res=300)
+#dev.off()
+```
+saving single cell object
+```{r}
+#saveRDS(filt_sce, file = paste0("/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Feb21/","filt_sce_", today(),".rds"))
+```
+
+obs
+Enforcing cluster sizes
+
+With method="hclust", cutreeDynamic is used to ensure that all clusters contain a minimum number of cells. However, some cells may not be assigned to any cluster and are assigned identities of "0" in the output vector. In most cases, this is because those cells belong in a separate cluster with fewer than min.size cells. The function will not be able to call this as a cluster as the minimum threshold on the number of cells has not been passed. Users are advised to check that the unassigned cells do indeed form their own cluster. Otherwise, it may be necessary to use a different clustering algorithm.
+
+When using method="igraph", clusters are first identified using the specified graph.fun. If the smallest cluster contains fewer cells than min.size, it is merged with the closest neighbouring cluster. In particular, the function will attempt to merge the smallest cluster with each other cluster. The merge that maximizes the modularity score is selected, and a new merged cluster is formed. This process is repeated until all (merged) clusters are larger than min.size.
+
+
+Getting cluster info
+```{r}
+extrainfo=data.frame("cell"=filt_sce@colData$cell, "cluster"=filt_sce$cluster)
+#write.table(extrainfo, file=paste0(saveDir,"clusters_notNorm_",today(),".tsv"), sep="\t", 
+#    quote=FALSE, col.names=NA)
+```
+
+Getting other info for Amy
+```{r}
+xp_matrix = logcounts(filt_sce)
+tsne_coord = reducedDim(filt_sce, "TSNE")
+xp_raw=counts(filt_sce)
+
+# write.table(xp_matrix, file=paste0(saveDir,"xp_matrix_norNorm_",today(),".tsv"), sep="\t",
+#     quote=FALSE, col.names=NA)
+
+# write.table(xp_raw, file=paste0(saveDir,"xp_raw_filt_notNorm_",today(),".tsv"), sep="\t",
+#     quote=FALSE, col.names=NA)
+
+# write.table(tsne_coord, file=paste0(saveDir,"tsne_coord_norNorm_",today(),".tsv"), sep="\t",
+#     quote=FALSE, col.names=NA)
+```
+
+
+Violin plot of ly6c2, S100a6, mrc1, tgfbi, cd36 and lgals1 for Amy (30/1/20)
+First get subset of sce with the above mentionaed genes
+```{r}
+genes.violin=c("Ly6c2", "S100a6", "Mrc1", "Tgfbi", "Cd36" , "Lgals1", "Nr4a1")
+sce_violin=filt_sce[genes.violin,]
+exp.violin=as.data.frame(logcounts(sce_violin))
+exp.violin$gene=rownames(exp.violin)
+exp.violin=exp.violin %>% dplyr::select(gene, everything())
+clusters.violin=data.frame("cell"=colnames(sce_violin),"cluster"=sce_violin$cluster)
+```
+
+Now gather and graph
+```{r}
+exp.violin.gather=gather(exp.violin, "cell", "Expression", 2:ncol(exp.violin))
+exp.violin.details= merge(exp.violin.gather, clusters.violin, by="cell")
+```
+
+get C before cluster name
+```{r}
+exp.violin.details$cluster=paste0("C",exp.violin.details$cluster)
+```
+
+```{r}
+p <-ggplot( data=exp.violin.details,
+        aes( x=cluster, y=Expression, color=cluster)) +
+  facet_wrap(~gene)+
+  geom_violin() + 
+  geom_jitter(size = 0.1) +
+  scale_color_manual(values=c("dodgerblue3","darkorange1","forestgreen","firebrick3","mediumpurple3", "burlywood4"))+
+  theme_minimal() +
+  labs(x = "Cluster",
+       y = "Normalised logcounts")+
+  theme(axis.text.x = element_text(family = "sans", angle = 60, size=8, hjust = 1))#+
+  #stat_compare_means(method = "anova", label.y.npc = "top", size = 3, label.x.npc= "center")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+                     #ref.group = ".all.", hide.ns = TRUE, label.y = 0.8, size = 2.5) 
+
+print(p)
+#ggsave(paste0(saveDir,"violin_genes_Amy_notNorm_",today(),".png"), dpi = 300, width = 15, height = 12, units = "cm")
+#ggsave(paste0(saveDir,"violin_genes_Amy_notNorm_",today(),".svg"), width = 28, height = 12)
+
+```
+
+
+
+#Summarising quality tables from alignment
+before filtering
+```{r}
+hisatData = read.delim(paste0(saveDir,"multiqc_hisat2.txt"), sep="\t")
+hisatData$Sample<- gsub("_alignment_report", "", hisatData$Sample)
+cellsData=data.frame("Sample"=sce$sample, "Condition"=sce$condition)
+
+hisatData.filt=merge(hisatData, cellsData, by="Sample")
+
+fastQCData=read.delim(paste0(saveDir,"fastqc_sequence_counts.txt"), sep="\t")
+fastQCData$Sample<- gsub("_R.*", "", fastQCData$Sample)
+
+fastQCData.filt=merge(fastQCData, cellsData, by="Sample")
+
+```
+
+#plot reads distribution
+```{r}
+par(mfrow=c(2,2))
+hist((fastQCData.filt %>% filter(Condition =="control"))$Unique.Reads,
+    xlab="Unique reads (control)",
+    ylab="Number of cells", breaks=20, main="", col="grey80")
+hist((fastQCData.filt %>% filter(Condition == "CML"))$Unique.Reads,
+    xlab="Unique reads (CML)",
+    ylab="Number of cells", breaks=20, main="", col="grey80")
+hist((fastQCData.filt %>% filter(Condition =="control"))$Duplicate.Reads,
+    xlab="Duplicate reads (control)",
+    ylab="Number of cells", breaks=20, main="", col="grey80")
+hist((fastQCData.filt %>% filter(Condition == "CML"))$Duplicate.Reads,
+    xlab="Duplicate reads (CML)",
+    ylab="Number of cells", breaks=20, main="", col="grey80")
+#dev.copy(png, paste0(saveDir,"reads",today(),".png"), width = 25, height = 25, units = "cm", res=300)
+#dev.off()
+
+```
+
+```{r}
+UR=fastQCData.filt %>% group_by(Condition) %>% summarise(max=max(Unique.Reads), min=min(Unique.Reads), mean=mean(Unique.Reads), median=median(Unique.Reads), sd=sd(Unique.Reads))
+UR$Condition = paste(UR$Condition,"Unique Reads")
+DR=fastQCData.filt %>% group_by(Condition) %>% summarise(max=max(Duplicate.Reads), min=min(Duplicate.Reads), mean=mean(Duplicate.Reads), median=median(Duplicate.Reads), sd=sd(Duplicate.Reads))
+DR$Condition = paste(DR$Condition, "Duplicate Reads")
+
+summaryData=bind_rows(UR,DR)
+#write.csv(summaryData, paste0(saveDir,"summaryFastQ",today(),".csv"), quote = F, row.names = F)
+```
+
+```{r}
+filter <- rowSums(assay(filt_sce)>5)>5
+table(filter)
+sce_z=filt_sce[filter,]
+```
+```{r}
+library(zinbwave)
+library(DESeq2)
+library(BiocParallel)
+
+nms <- c("counts", setdiff(assayNames(sce_z), "counts"))
+assays(sce_z) <- assays(sce_z)[nms]
+
+zinb <- zinbwave(sce_z, K=0, observationalWeights=TRUE,
+                   BPPARAM=SerialParam(), epsilon=1e12)
+```
+
+
+
+
+
+```{r}
+suppressPackageStartupMessages(library(DESeq2))
+
+dds <- DESeqDataSet(zinb, design=~0+cluster)
+dds <- estimateSizeFactors(dds, type="poscounts")
+library(scran)
+scr <- computeSumFactors(dds)
+
+```
+
+```{r}
+sizeFactors(dds) <- sizeFactors(scr)
+# run DESeq:
+system.time({
+  dds <- DESeq(dds, test="LRT", reduced=~1,
+               minmu=1e-6, minRep=Inf)
+})
+```
+
+```{r}
+plotDispEsts(dds)
+```
+
+
+```{r}
+getResultFromContrast<-function(contr,i){
+  res <- results(dds, contrast = contr)
+  res.sh=lfcShrink(dds,contrast = contr,res=res, type="ashr")
+  res.sh$gene <-rownames(res.sh)
+  df.res<-as.data.frame(res.sh)
+  ensembl = useEnsembl(biomart="ensembl", dataset=ensembl_dataset)
+  t2g <- biomaRt::getBM(attributes = c("external_gene_name", "entrezgene_id"), mart = ensembl)
+  t2g <- dplyr::rename(t2g, gene = external_gene_name, entrez_id=entrezgene_id)
+  df.annot<-merge(x=df.res, y=t2g, by="gene", all.x=TRUE)
+  write.csv(df.annot, file=paste0(saveDir,"DESeq2.cluster",as.character(i),".",today(),".csv"), row.names = FALSE)
+  
+}
+
+```
+
+
+```{r}
+c1=c(1,-1/5,-1/5,-1/5,-1/5,-1/5)
+c2=c(-1/5,1,-1/5,-1/5,-1/5,-1/5)
+c3=c(-1/5,-1/5,-1/5,1,-1/5,-1/5)
+c4=c(-1/5,-1/5,-1/5,1,-1/5,-1/5)
+c5=c(-1/5,-1/5,-1/5,-1/5, 1, -1/5)
+c6=c(-1/5,-1/5,-1/5,-1/5,-1/5,1)
+
+listContrasts=list(c1,c2,c3,c4,c5,c6)
+
+for(i in 1:length(listContrasts)){
+  getResultFromContrast(listContrasts[[i]],i)
+  }
+
+```
+
+Saving normalised counts
+```{r}
+normCountsAmy<-counts(dds, normalized=TRUE)
+write.csv(normCountsAmy, "/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Dec/normCountsDESeq_11_12_2-.csv", quote = F, row.names = T)
+```
+
+
+
+#New DESeq, but for CML vs normal
+```{r}
+suppressPackageStartupMessages(library(DESeq2))
+
+dds2 <- DESeqDataSet(zinb, design=~condition)
+dds2 <- estimateSizeFactors(dds2, type="poscounts")
+library(scran)
+scr2 <- computeSumFactors(dds2)
+
+```
+
+```{r}
+sizeFactors(dds2) <- sizeFactors(scr2)
+# run DESeq:
+system.time({
+  dds2 <- DESeq(dds2, test="LRT", reduced=~1,
+               minmu=1e-6, minRep=Inf)
+})
+```
+
+```{r}
+plotDispEsts(dds2)
+```
+
+
+```{r}
+dds2$condition <- relevel(dds2$condition, ref = "control")
+resultsNames(dds2)
+```
+
+```{r}
+ensembl_dataset="mmusculus_gene_ensembl"
+res2 <- results(dds2, name = "condition_control_vs_CML")
+
+res2.sh=lfcShrink(dds2,coef = "condition_control_vs_CML",res=res2, type="ashr")
+  
+res2.sh$gene <-rownames(res2.sh)
+  
+df.res2<-as.data.frame(res2.sh)
+  
+ensembl = useEnsembl(biomart="ensembl", dataset=ensembl_dataset)
+  
+t2g <- biomaRt::getBM(attributes = c("external_gene_name", "entrezgene_id"), mart = ensembl)
+  
+t2g <- dplyr::rename(t2g, gene = external_gene_name, entrez_id=entrezgene_id)
+  
+df2.annot<-merge(x=df.res2, y=t2g, by="gene", all.x=TRUE)
+  
+write.csv(df2.annot, file=paste0(dir2,"DESeq2.condition",".",today(),".csv"), row.names = FALSE)
+
+
+```
+
+
+Filter for LFC > abs(1.5) and padj <0.05
+```{r}
+df2.annot.filt = df2.annot %>% filter(padj<0.05 & abs(log2FoldChange)>1.5)
+write.csv(df2.annot.filt, file=paste0(dir2,"DESeq2.filt_LFC_padj.condition.",today(),".csv"), row.names = FALSE)
+```
+
+getting condition and cell info
+
+```{r}
+filt_sce@metadata
+```
+
+Saving normalised counts
+```{r}
+normCountsAmy2<-counts(dds2, normalized=TRUE)
+write.csv(normCountsAmy2, "/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Feb21/normCountsDESeq_condition_16_02_21.csv", quote = F, row.names = T)
+```
+
+
+################
+
+
+
+
+
+```{r}
+library(nichenetr)
+library(Seurat)
+zinbAsSeurat=as.Seurat(zinb)
+```
+```{r}
+zinbAsSeurat@meta.data$condition %>% table()
+
+```
+Read in NicheNet’s ligand-target prior model, ligand-receptor network and weighted integrated networks:
+
+```{r}
+ligand_target_matrix = readRDS(url("https://zenodo.org/record/3260758/files/ligand_target_matrix.rds"))
+lr_network = readRDS(url("https://zenodo.org/record/3260758/files/lr_network.rds"))
+weighted_networks = readRDS(url("https://zenodo.org/record/3260758/files/weighted_networks.rds"))
+weighted_networks_lr = weighted_networks$lr_sig %>% inner_join(lr_network %>% distinct(from,to), by = c("from","to"))
+```
+
+```{r}
+sessionInfo()
+```

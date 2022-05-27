@@ -1,0 +1,125 @@
+---
+title: "Ranks for GSEA"
+author: "Joana Bittencourt Silvestre"
+date: "19/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("readr")
+library("dplyr")
+library("ggplot2")
+library("fgsea")
+library("reactome.db")
+library("biomaRt")
+library("purrr")
+library("data.table")
+library("stringi")
+library("stringr")
+library("tidyr")
+```
+
+
+Set names of directories, input and output files
+```{r}
+wd="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/April/"
+
+#choose mart to annotate leading edge
+species<-"mmusculus_gene_ensembl"
+ 
+```
+
+Function to get all DESeq2 files that aren't filtered
+```{r}
+#read all files from chosen directory
+#chose the ones that have a certain pattern on them (usually "DESeq2")
+#take aways the filtered ones (remove the ones with "filt")
+getFilesList<-function(wd){
+  setwd(wd)
+  listFiles<-Sys.glob("DESeq2*.csv")
+  filtMask<-!str_detect(listFiles, "filt")
+  listFiles<-listFiles[filtMask]
+  return(listFiles)
+}
+
+```
+
+
+
+Function to obtain title of graphs
+```{r}
+getTitles<-function(lFiles){
+  lTitles<-list()
+  for (i in 1:length(lFiles)){
+    f<-lFiles[[i]]
+    t<-strsplit(f,"\\.")[[1]]
+    t <- gsub("_", " ", t[[2]])
+    lTitles[[i]] <- t
+    i <- i + 1
+  }
+  return(lTitles)
+}
+```
+
+Now get titles of graphs
+```{r}
+listFiles<-getFilesList(wd)
+```
+```{r}
+listTitles<-getTitles(listFiles)
+```
+
+
+
+##Set function to do fgsea analysis
+
+Function to do the whole analysis
+
+Rank calculation according to Russell Hyde 
+```{r}
+getRank<-function(file, wd){
+  
+  data<-read_csv(paste0(wd,file), col_names=TRUE)
+  data$rank<-( -log(data$pvalue) * sign(data$log2FoldChange) )
+  genes.ranked<-dplyr::select(data, gene, rank) %>% 
+    dplyr::filter(is.finite(rank)&!is.na(gene))
+  
+  return(genes.ranked)
+}
+```
+
+```{r}
+#Function to process a list of files, returning a list of results
+processListFiles<-function(listFiles, wd){
+  listResults<-list()
+  for(i in 1:length(listFiles)){
+    listResults[[i]] <- getRank(listFiles[[i]], wd)
+  }
+  return(listResults)
+}
+```
+
+Process all files in 
+```{r}
+lRes<-processListFiles(listFiles, wd)
+
+```
+
+
+And now save
+```{r}
+saveFiles<-function(lRes, listTitles, wd){
+  for(i in 1:length(listTitles)){
+  fname<-stri_replace_all_fixed(listTitles[[i]], " ", "_")
+  res<-lRes[[i]]
+  write.table(res,file=paste0(wd,fname,".rnk"), row.names = FALSE, sep="\t", quote=F)
+  }
+}
+saveFiles(lRes, listTitles, wd)  
+```
+
+
+```{r}
+sessionInfo()
+```

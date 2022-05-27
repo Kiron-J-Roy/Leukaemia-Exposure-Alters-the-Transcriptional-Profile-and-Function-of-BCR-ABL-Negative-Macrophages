@@ -1,0 +1,88 @@
+---
+title: "ReactomePA Alison"
+author: "Joana Bittencourt Silvestre"
+date: "24/11/2020"
+output: html_document
+---
+
+First, let's load the package
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringi)
+library(stringr)
+library(clusterProfiler)
+library(lubridate)
+```
+
+Set names of directories, input and output files
+```{r}
+wd="/Volumes/SS-Bioinf/Projects/Vignir/Joana_Amy/05_Analysis/noNeut/Nov2/"
+```
+
+```{r}
+#read all files from chosen directory
+#chose the ones that have a certain pattern on them (usually "DESeq2")
+#take always the filtered ones
+getFilesList<-function(wd){
+  setwd(wd)
+  listFiles<-Sys.glob("*DESeq2*.csv")
+  filtMask<-!str_detect(listFiles, "filt")
+  notEmpty<-file.size(listFiles) > 0
+  listFiles<-listFiles[filtMask & notEmpty] 
+  return(listFiles)
+}
+```
+
+
+```{r}
+getTitles<-function(lFiles){
+  lTitles<-list()
+  for (i in 1:length(lFiles)){
+    f<-lFiles[[i]]
+    t<-strsplit(f,"\\.")[[1]]
+    t1 <- gsub("_", " ", t[[2]])
+    lTitles[[i]] <- t1
+    i <- i + 1
+  }
+  return(lTitles)
+}
+```
+
+
+```{r}
+getGeneListForKegg<-function(listFiles, titlesList, wd){
+ for(i in 1:length(listFiles)){
+    df<-read.csv(paste0(wd,listFiles[[i]]))
+    
+    df_dr = df %>% dplyr::filter(log2FoldChange < -1.5 & padj <0.05 ) %>%
+    dplyr::select(gene) %>%
+    drop_na() 
+    #write.csv(df_dr, paste0(wd,"forKegg_",titlesList[[i]],"_neg_",today(),".txt"), quote = F, row.names = F)
+    
+    df_ur= df %>% dplyr::filter(log2FoldChange > 1.5 & padj <0.05 ) %>%
+    dplyr::select(gene) %>%
+    drop_na()
+   # write.csv(df_ur, paste0(wd,"forKegg_",titlesList[[i]],"_pos_",today(),".txt"), quote = F, row.names = F)
+
+    allGoi=bind_rows(df_dr,df_ur)
+    write.csv(allGoi, paste0(wd,"forCellphoneDB_",titlesList[[i]], "_",today(),".txt"), quote = F, row.names = F)
+    
+    }
+    
+  }
+
+
+```
+
+Get all the lists you need
+```{r}
+filesList<-getFilesList(wd)
+titlesList<-getTitles(filesList)
+getGeneListForKegg(filesList, titlesList, wd)
+```
+
+
+```{r}
+sessionInfo()
+```
