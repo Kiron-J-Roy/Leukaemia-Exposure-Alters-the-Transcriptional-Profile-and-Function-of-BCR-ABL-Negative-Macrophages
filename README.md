@@ -1,4 +1,4 @@
-This repository contains the files and scripts used for the pre-processing and downstream analysis (main figures 4,5a-i and supplementary figures 5-7) of the single cell macrophage dataset.  
+This repository contains the files and scripts used for the pre-processing and downstream analysis (main figures 4, 5a-i and supplementary figures 5-7) of the single cell macrophage dataset.  
 
 ### <ins> Leukaemia Exposure Alters the Transcriptional Profile and Function of BCR-ABL Negative Macrophages in the Bone Marrow Niche </ins>
 
