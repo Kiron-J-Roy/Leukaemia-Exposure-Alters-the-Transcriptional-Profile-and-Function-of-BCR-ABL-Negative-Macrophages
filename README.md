@@ -51,17 +51,19 @@ Single cell macrophage data available at:
 This repository contains the Bash and R scripts pertaining to the single-cell RNA-seq analysis of the macrophage dataset. Additionally it contains DESeq2 outputs for the comparison of each cluster to the mean expression of all other clusters, and the .rnk files used for GSEA.
 
 1. The Bash scripts folder contains the Bash scripts used for preprocessing, utilising the following command line tools:
-  - FastQC v0.11.8 
-  - Trim_galore v0.5.0
-  - Hisat2 v2.1.0
-  - FeatureCounts v1.6.2
+    - FastQC v0.11.8 
+    - Trim_galore v0.5.0
+    - Hisat2 v2.1.0
+    - FeatureCounts v1.6.2
  
 2. The R scripts folder contains the code relating to further filtering steps, normalisation and visulisation.
-  - Clustering was performed using nearest neighbour from the Scran package followed by cluster walktrap from the igraph package.
-  - T-SNE plots were produced using Scater. Markers for clusters were obtained using the findMarkers function in Scran and heatmaps were plotted using Scater. Violin       plots were generated using ggplot2.
-  - Differential expression was calculated using DESeq2 and Zinbwave, with each cluster being compared to the average of all the other clusters together.
-  - GSEA44,45 was performed on a ranked list formed of the -log of the p-value of each gene, multiplied by -1 in case the log2 fold-change was negative, or 1, in case     the log2 fold-change was positive.
-  - Pathway analysis using Kegg46-48, Reactome4 and Wikipathways was performed using http://www.webgestalt.org
+    - Clustering was performed using nearest neighbour from the Scran package followed by cluster walktrap from the igraph package.
+    - T-SNE plots were produced using Scater. Markers for clusters were obtained using the findMarkers function in Scran and heatmaps were plotted using Scater. Violin       plots were generated using ggplot2.
+    - Differential expression was calculated using DESeq2 and Zinbwave, with each cluster being compared to the average of all the other clusters together.
+    - GSEA44,45 was performed on a ranked list formed of the -log of the p-value of each gene, multiplied by -1 in case the log2 fold-change was negative, or 1, in           case the log2 fold-change was positive.
+    - Pathway analysis using Kegg46-48, Reactome4 and Wikipathways was performed using http://www.webgestalt.org
   
-  
+  3. The GSEA .rnk files file contains .rnk files for each cluster.
+  4. The DESeq2 outputs file contains DESeq2/Zinbwave differential gene expression tables.
+  5. The Figures and Figure legends and Supplementary Figures files contain all figures from the main text and the supplementary text respectivley.
  
