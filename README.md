@@ -61,7 +61,7 @@ This repository contains the Bash and R scripts pertaining to the single-cell RN
     - T-SNE plots were produced using Scater. Markers for clusters were obtained using the findMarkers function in Scran and heatmaps were plotted using Scater. Violin       plots were generated using ggplot2.
     - Differential expression was calculated using DESeq2 and Zinbwave, with each cluster being compared to the average of all the other clusters together.
     - GSEA44,45 was performed on a ranked list formed of the -log of the p-value of each gene, multiplied by -1 in case the log2 fold-change was negative, or 1, in           case the log2 fold-change was positive.
-    - Pathway analysis using Kegg46-48, Reactome4 and Wikipathways was performed using http://www.webgestalt.org
+    - Pathway analysis using Kegg, Reactome and Wikipathways was performed using http://www.webgestalt.org
   
   3. The GSEA .rnk files file contains .rnk files for each cluster.
   4. The DESeq2 outputs file contains DESeq2/Zinbwave differential gene expression tables.
