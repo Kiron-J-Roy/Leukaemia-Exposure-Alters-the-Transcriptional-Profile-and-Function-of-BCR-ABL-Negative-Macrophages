@@ -44,7 +44,9 @@ and inflammatory gene expression in BM macrophages.
 
 Pre-print now online at:
 
-Single cell macrophage data available at:
+GEO link: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE204978
+
+Access token:kruzmyowvduvvuj
 
 ### <ins> Repository overview
 
