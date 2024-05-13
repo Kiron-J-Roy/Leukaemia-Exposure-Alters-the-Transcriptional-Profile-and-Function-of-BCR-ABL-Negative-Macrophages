@@ -1,5 +1,10 @@
 This repository contains the files and scripts used for the pre-processing and downstream analysis (main figures 4, 5a-i and supplementary figures 5-7) of the single cell macrophage dataset.  
 
+**Trancriptomics R** contains the R code used to process E-MTAB-2581, E-MTAB-2594 and GSE216837 starting from either the .CEL files or from the count matrix. 
+**Differential expression tables** contains the differential expression tables generated from the scripts in **Trancriptomics R** (E-MTAB-2581, E-MTAB-2594 and GSE216837) used to generate figures 4a and b.
+**GSEA** contains the GSEA output files used to plot figures 2a.
+
+
 ### <ins> Leukaemia Exposure Alters the Transcriptional Profile and Function of BCR-ABL Negative Macrophages in the Bone Marrow Niche </ins>
 
 Amy Dawson<sup>1</sup>, Joana Bittencourt-Silvestre<sup>2</sup>, Ya-Ching Hsieh<sup>3</sup>, Isabel van Loon<sup>1</sup>,
